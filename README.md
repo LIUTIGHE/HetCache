@@ -181,7 +181,7 @@ Combine any baseline with TeaCache by appending `_teacache` (e.g., `pab_teacache
 
 ## Evaluation
 
-We provide `evaluation.py` with two subcommands:
+We provide `evaluation.py` with two subcommands. Our benchmark in paper is relatively resource-constrained, we welcome furture benchmark extension using our toolkits to better evaluate ours and relative methods.
 
 | Subcommand | Metrics | GT Required? |
 |---|---|---|
@@ -209,6 +209,10 @@ python evaluation.py quality \
 ```
 
 VFID is computed automatically in batch mode when [I3D weights](https://github.com/piergiaj/pytorch-i3d) (`i3d_rgb_imagenet.pt`) are available. GT videos are truncated to match the generated video length before I3D feature extraction (8-frame temporal sampling by default).
+
+> **⚠️ Note on VFID frame alignment**
+>
+> During the preparation of this work, we identified a frame-alignment issue in our VFID evaluation: when GT videos are longer than generated videos (e.g., GT has 80–240 frames but generated videos have 33 frames), the GT must be truncated to the same temporal range before I3D feature extraction. Without truncation, the I3D features encode different temporal content, inflating VFID values. Our corrected `evaluation.py` automatically truncates GT to match the generated video length. The **relative ranking between methods is unaffected**, but absolute VFID values in the paper are higher than the corrected values. This does not affect other metrics (PSNR, SSIM, LPIPS, VBench) which use frame-aligned comparisons.
 
 ### Reference-Free VBench Metrics
 
