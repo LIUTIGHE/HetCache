@@ -665,18 +665,18 @@ class WanVideoPipeline(BasePipeline):
                 # Priority 1: Use directly returned attention weights
                 if return_attn and attention_weights_posi is not None:
                     attention_map = attention_weights_posi
-                    print(f"[DEBUG] Got attention from model output: {attention_map.shape}")
+                    # print(f"[DEBUG] Got attention from model output: {attention_map.shape}")
                 # Priority 2: Use cached attention from masked_token_cache (correct attribute: cached_attention)
                 elif "masked_token_cache" in inputs_posi and inputs_posi["masked_token_cache"] is not None:
                     mtc = inputs_posi["masked_token_cache"]
                     if hasattr(mtc, 'cached_attention') and mtc.cached_attention is not None:
                         attention_map = mtc.cached_attention
-                        print(f"[DEBUG] Got attention from cache: {attention_map.shape}")
+                        # print(f"[DEBUG] Got attention from cache: {attention_map.shape}")
                     if hasattr(mtc, 'token_classification') and mtc.token_classification is not None:
                         token_classification = mtc.token_classification
-                        print(f"[DEBUG] Got token classification: {token_classification.keys() if isinstance(token_classification, dict) else type(token_classification)}")
+                        # print(f"[DEBUG] Got token classification: {token_classification.keys() if isinstance(token_classification, dict) else type(token_classification)}")
                 else:
-                    print(f"[DEBUG] No attention available (return_attn={return_attn}, attention_weights_posi={attention_weights_posi is not None}, has_cache={inputs_posi.get('masked_token_cache') is not None})")
+                    # print(f"[DEBUG] No attention available (return_attn={return_attn}, attention_weights_posi={attention_weights_posi is not None}, has_cache={inputs_posi.get('masked_token_cache') is not None})")
                 
                 step_callback(
                     step_idx=progress_id,
@@ -1256,10 +1256,10 @@ class TeaCache:
         self.step_distances.append(self.accumulated_rel_l1_distance)
         if should_calc:
             self.computed_steps.append(self.step)
-            print(f"[TeaCache] Step {self.step}: COMPUTE (distance={self.accumulated_rel_l1_distance:.6f}, thresh={self.rel_l1_thresh})")
+            # print(f"[TeaCache] Step {self.step}: COMPUTE (distance={self.accumulated_rel_l1_distance:.6f}, thresh={self.rel_l1_thresh})")
         else:
             self.skipped_steps.append(self.step)
-            print(f"[TeaCache] Step {self.step}: SKIP (distance={self.accumulated_rel_l1_distance:.6f} < thresh={self.rel_l1_thresh})")
+            # print(f"[TeaCache] Step {self.step}: SKIP (distance={self.accumulated_rel_l1_distance:.6f} < thresh={self.rel_l1_thresh})")
         
         self.previous_modulated_input = modulated_inp
         self.step += 1
@@ -2433,11 +2433,11 @@ class MaskedTokenCache:
         
         # [DEBUG] Profiling
         memory_mb = attention_fp16.numel() * 2 / 1024 / 1024  # fp16 = 2 bytes
-        print(f"\n[cache_attention_last_layer] Layer {layer_id}, Step {timestep}")
-        print(f"  Cached attention: {attention_fp16.shape}, memory={memory_mb:.1f}MB ({self.attention_cache_device})")
+        # print(f"\n[cache_attention_last_layer] Layer {layer_id}, Step {timestep}")
+        # print(f"  Cached attention: {attention_fp16.shape}, memory={memory_mb:.1f}MB ({self.attention_cache_device})")
         if x is not None and context_indices is not None:
-            print(f"  K-Means candidates: {len(self.attention_interaction_candidates)} tokens")
-        print(f"  This will be used in NEXT partial-compute step\n")
+            # print(f"  K-Means candidates: {len(self.attention_interaction_candidates)} tokens")
+        # print(f"  This will be used in NEXT partial-compute step\n")
     
     def get_attention_cache_age(self, current_timestep: int) -> int:
         """
@@ -2532,10 +2532,10 @@ class MaskedTokenCache:
             self.kmeans_cluster_centers = kmeans.cluster_centers_  # [n_clusters, D] numpy
             self.kmeans_context_indices = context_indices.clone()  # [N_context]
             self.kmeans_valid = True
-            print(f"  [DEBUG] K-Means cached for attention-only mode: {n_clusters} clusters")
+            # print(f"  [DEBUG] K-Means cached for attention-only mode: {n_clusters} clusters")
         else:
             # K-Means sampling enabled: compute_and_cache_kmeans will handle caching later
-            print(f"  [DEBUG] K-Means caching deferred to compute_and_cache_kmeans (use_kmeans_sampling=True)")
+            # print(f"  [DEBUG] K-Means caching deferred to compute_and_cache_kmeans (use_kmeans_sampling=True)")
     
     def _attention_interaction_sample_context(
         self,
@@ -2646,12 +2646,12 @@ class MaskedTokenCache:
         from sklearn.cluster import MiniBatchKMeans
         
         # [DEBUG] Always log when called
-        print(f"\n[compute_and_cache_kmeans] Called at Layer {layer_id}, Step {self.current_step}")
-        print(f"  is_full_compute={self.is_full_compute}, num_layers={self.num_layers}, layer_id={layer_id}")
+        # print(f"\n[compute_and_cache_kmeans] Called at Layer {layer_id}, Step {self.current_step}")
+        # print(f"  is_full_compute={self.is_full_compute}, num_layers={self.num_layers}, layer_id={layer_id}")
         
         # Only run at last layer of full-compute steps
         if not self.is_full_compute or layer_id != (self.num_layers - 1):
-            print(f"  → Skipping: not (full_compute and last_layer)")
+            # print(f"  → Skipping: not (full_compute and last_layer)")
             return
         
         t_start = time.time()
@@ -2690,10 +2690,10 @@ class MaskedTokenCache:
         self.kmeans_valid = True
         
         t_elapsed = time.time() - t_start
-        print(f"\n[K-Means Cache] Layer {layer_id}, Step {self.current_step}")
-        print(f"  Computed {n_clusters} clusters from {N_context} context tokens in {t_elapsed*1000:.1f}ms")
-        print(f"  ✓ kmeans_valid set to True")
-        print(f"  This will be used in NEXT partial-compute steps\n")
+        # print(f"\n[K-Means Cache] Layer {layer_id}, Step {self.current_step}")
+        # print(f"  Computed {n_clusters} clusters from {N_context} context tokens in {t_elapsed*1000:.1f}ms")
+        # print(f"  ✓ kmeans_valid set to True")
+        # print(f"  This will be used in NEXT partial-compute steps\n")
     
     def _kmeans_attention_combined_sample(
         self,
@@ -2812,7 +2812,7 @@ class MaskedTokenCache:
         selected_indices = context_indices[selected_local_tensor]
         
         if layer_id == 0:
-            print(f"  [K-Means+Attention] {n_clusters} clusters × attention scores → {len(selected_indices)} tokens")
+            # print(f"  [K-Means+Attention] {n_clusters} clusters × attention scores → {len(selected_indices)} tokens")
         
         return selected_indices
     
@@ -2850,7 +2850,7 @@ class MaskedTokenCache:
         
         # Verify context indices match cached indices
         if not torch.equal(context_indices, self.kmeans_context_indices):
-            print(f"  [Warning] Context indices changed, invalidating K-Means cache")
+            # print(f"  [Warning] Context indices changed, invalidating K-Means cache")
             self.kmeans_valid = False
             stride = len(context_indices) // K_context if K_context < len(context_indices) else 1
             return context_indices[::stride][:K_context]
@@ -2891,7 +2891,7 @@ class MaskedTokenCache:
         selected_indices = context_indices[selected_local_tensor]
         
         if layer_id == 0:
-            print(f"  [K-Means Sample] Using cached clusters: {n_clusters} clusters → {len(selected_indices)} tokens")
+            # print(f"  [K-Means Sample] Using cached clusters: {n_clusters} clusters → {len(selected_indices)} tokens")
         
         return selected_indices
     
@@ -3459,9 +3459,9 @@ def block_forward_with_masked_token_cache(
     else:
         # [DEBUG] Why not calling K-Means cache?
         if layer_id >= 28:  # Only log for last few layers
-            print(f"\n[block_forward] Layer {layer_id}: NOT calling compute_and_cache_kmeans")
-            print(f"  use_kmeans_sampling={masked_token_cache.use_kmeans_sampling}")
-            print(f"  token_classification={'Available' if masked_token_cache.token_classification is not None else 'None'}\n")
+            # print(f"\n[block_forward] Layer {layer_id}: NOT calling compute_and_cache_kmeans")
+            # print(f"  use_kmeans_sampling={masked_token_cache.use_kmeans_sampling}")
+            # print(f"  token_classification={'Available' if masked_token_cache.token_classification is not None else 'None'}\n")
     
     # If attention weights were requested, return them
     if return_attention_weights:
@@ -3648,10 +3648,10 @@ def model_fn_wan_video(
         masked_token_timestep_skip, is_full_compute = masked_token_cache.check_timestep_skip(x, t_mod)
         
         if masked_token_timestep_skip:
-            print(f"[MaskedTokenCache] Step {masked_token_cache.current_step}: SKIP timestep (accumulated_distance={masked_token_cache.accumulated_rel_l1_distance:.4f})")
+            # print(f"[MaskedTokenCache] Step {masked_token_cache.current_step}: SKIP timestep (accumulated_distance={masked_token_cache.accumulated_rel_l1_distance:.4f})")
         else:
             compute_type = "FULL" if is_full_compute else "PARTIAL"
-            print(f"[MaskedTokenCache] Step {masked_token_cache.current_step}: {compute_type} compute (accumulated_distance={masked_token_cache.accumulated_rel_l1_distance:.4f})")
+            # print(f"[MaskedTokenCache] Step {masked_token_cache.current_step}: {compute_type} compute (accumulated_distance={masked_token_cache.accumulated_rel_l1_distance:.4f})")
 
         
     if vace_context is not None:
