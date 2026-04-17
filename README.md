@@ -23,25 +23,17 @@ HetCache is a **training-free** method to accelerate diffusion-based video editi
 
 ### Key Idea
 
-In masked video editing, different spatial tokens play fundamentally different roles:
-
-| Token Type | Description | Compute Ratio |
-|---|---|---|
-| **Generative** | Inside the editing mask — requires full denoising | 100% (always computed) |
-| **Margin** | Near the mask boundary — ensures seamless blending | ~70% (subsampled) |
-| **Context** | Background / far from mask — already known content | ~5% (sparse sampling) |
-
-HetCache introduces a **three-level timestep decision** mechanism combined with **heterogeneous token caching**:
+In masked video editing, different spatial tokens play fundamentally different roles. HetCache introduces a **three-level timestep decision** mechanism combined with **heterogeneous token caching**:
 
 1. **Full Compute** (large feature change): All tokens are computed.
 2. **Partial Compute** (moderate change): Only generative + sampled margin/context tokens are computed; the rest are retrieved from cache.
-3. **Full Reuse** (small change): Entire output is reused from cache.
+3. **Reuse** (small change): Entire output is reused from cache.
 
-### Two-Stage Context Sampling
-
-For the small fraction of context tokens that are computed, HetCache uses a two-stage sampling strategy:
-- **Stage 1 — K-Means Clustering**: Groups context tokens by semantic similarity to ensure spatial diversity.
-- **Stage 2 — Attention-Interaction Scoring**: Ranks tokens within each cluster by their attention interaction strength with generative tokens, selecting the most relevant ones.
+| Token Type | Description |
+|---|---|
+| **Generative** | Inside the editing mask — requires full denoising |
+| **Margin** | Near the mask boundary — ensures seamless blending |
+| **Context** | Background / far from mask — already known content |
 
 ---
 
@@ -61,27 +53,11 @@ pip install -r requirements.txt
 
 ### Model Download
 
-HetCache uses [Wan2.1-VACE](https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B) as the base model. It will be downloaded automatically on first run via `modelscope` / HuggingFace.
+HetCache uses [Wan2.1-VACE-1.3B](https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B) as the base model. It will be downloaded automatically on first run via `modelscope` / HuggingFace.
 
 ---
 
 ## Quick Start
-
-### HetCache (Ours)
-
-```bash
-python inference.py \
-    --mode hetcache \
-    --video data/real.mp4 \
-    --mask data/masks.mp4 \
-    --frames 33 --steps 50 \
-    --cache-thresh 0.05 \
-    --context-ratio 0.05 \
-    --margin-ratio 0.7 \
-    --use-kmeans --kmeans-clusters 16 \
-    --use-attention-interaction \
-    --apply-mask-to-input
-```
 
 ### Baseline (No Acceleration)
 
@@ -91,18 +67,6 @@ python inference.py \
     --video data/real.mp4 \
     --mask data/masks.mp4 \
     --frames 33 --steps 50 \
-    --apply-mask-to-input
-```
-
-### TeaCache
-
-```bash
-python inference.py \
-    --mode teacache \
-    --video data/real.mp4 \
-    --mask data/masks.mp4 \
-    --frames 33 --steps 50 \
-    --cache-thresh 0.05 \
     --apply-mask-to-input
 ```
 
@@ -128,7 +92,37 @@ python inference.py \
     --apply-mask-to-input
 ```
 
+### TeaCache
+
+```bash
+python inference.py \
+    --mode teacache \
+    --video data/real.mp4 \
+    --mask data/masks.mp4 \
+    --frames 33 --steps 50 \
+    --cache-thresh 0.05 \
+    --apply-mask-to-input
+```
+
+### HetCache (Ours)
+
+```bash
+python inference.py \
+    --mode hetcache \
+    --video data/real.mp4 \
+    --mask data/masks.mp4 \
+    --frames 33 --steps 50 \
+    --cache-thresh 0.05 \
+    --context-ratio 0.7 \
+    --margin-ratio 1.0 \
+    --use-kmeans --kmeans-clusters 16 \
+    --use-attention-interaction \
+    --apply-mask-to-input
+```
+
 ### FastCache
+
+**Note:** FastCache implementation may not be fully accurate. Just for theoretical reference.
 
 ```bash
 python inference.py \
@@ -146,11 +140,10 @@ python inference.py \
 | Mode | Description | Timestep Cache | Token Cache |
 |---|---|---|---|
 | `baseline` | No acceleration | ✗ | ✗ |
+| `pab` | Pyramid Attention Broadcast | ✓ | ✗ |
+| `adacache` | AdaCache adaptive caching | ✓ | ✗ |
 | `teacache` | TeaCache timestep-level caching | ✓ | ✗ |
 | `hetcache` | **HetCache** (ours) — heterogeneous token caching | ✓ | ✓ |
-| `pab` | Pyramid Attention Broadcast | ✓ (broadcast) | ✗ |
-| `adacache` | AdaCache adaptive caching | ✓ (codebook) | ✗ |
-| `fastcache` | FastCache statistical caching | ✓ (chi-square) | ✗ |
 
 Combine any baseline with TeaCache by appending `_teacache` (e.g., `pab_teacache`).
 
@@ -158,9 +151,9 @@ Combine any baseline with TeaCache by appending `_teacache` (e.g., `pab_teacache
 
 ## Results
 
-### Wan2.1-VACE-1.3B — Video Inpainting (VACE-Benchmark, 50 steps)
+### Wan2.1-VACE-1.3B — Video Inpainting (VACE-Benchmark, 50 steps, 33 frames)
 
-| Method | PFLOPs ↓ | Time (s) ↓ | Speedup ↑ |
+| Method | Theoretical PFLOPs ↓ | Time (s) ↓ | Speedup ↑ |
 |---|---|---|---|
 | Timestep Reduction (baseline) | 72.60 | 238.84 | 1.00× |
 | TeaCache-slow (Δ=0.05) | 47.19 | 224.53 | 1.06× |
@@ -171,15 +164,6 @@ Combine any baseline with TeaCache by appending `_teacache` (e.g., `pab_teacache
 | **HetCache-slow (Δ=0.05)** | **30.68** | **176.31** | **1.35×** |
 | **HetCache-fast (Δ=0.02)** | **23.60** | **166.81** | **1.43×** |
 
-> Speedup is computed relative to the 50-step timestep reduction baseline. All methods also include the timestep reduction from the base scheduler (100→50 steps corresponds to a 2× speedup over the full 100-step baseline).
-
-### Wan2.1-VACE-1.3B — Video Outpainting (50 steps)
-
-| Method | PFLOPs ↓ | Time (s) ↓ |
-|---|---|---|
-| Timestep Reduction | 72.60 | 241.02 |
-| TeaCache-slow | 47.19 | 225.05 |
-| **HetCache-slow** | **30.68** | **177.72** |
 
 ---
 
@@ -191,59 +175,52 @@ Combine any baseline with TeaCache by appending `_teacache` (e.g., `pab_teacache
 | Context Ratio | `--context-ratio` | 0.05 | Fraction of context tokens to compute (rest are cached). |
 | Margin Ratio | `--margin-ratio` | 0.7 | Fraction of margin tokens to compute. |
 | K-Means Clusters | `--kmeans-clusters` | 16 | Number of clusters for context sampling diversity. |
-| Attention Interaction | `--use-attention-interaction` | off | Enable two-stage (K-Means + Attention) context sampling. |
-
----
-
-## Method Architecture
-
-```
-Timestep t
-    │
-    ├─ Compute L1 distance Δ(t) via polynomial-rescaled TeaCache
-    │
-    ├─ If Δ(t) > 1.5×thresh  ──→  FULL COMPUTE (all tokens)
-    │
-    ├─ If thresh < Δ(t) < 1.5×thresh  ──→  PARTIAL COMPUTE
-    │     ├─ Generative tokens: always computed (100%)
-    │     ├─ Margin tokens: subsampled (~70%)
-    │     └─ Context tokens: sparse two-stage sampling (~5%)
-    │           ├─ Stage 1: K-Means clustering (semantic diversity)
-    │           └─ Stage 2: Attention scoring (relevance ranking)
-    │
-    └─ If Δ(t) < thresh  ──→  FULL REUSE (entire output from cache)
-```
+| Attention Interaction | `--use-attention-interaction` | off | Enable K-Means + Attention context sampling. |
 
 ---
 
 ## Evaluation
 
-We provide `evaluation.py` for computing quality metrics.
+We provide `evaluation.py` with two subcommands:
 
-### Per-Video Metrics (PSNR / SSIM / LPIPS)
+| Subcommand | Metrics | GT Required? |
+|---|---|---|
+| `quality` | PSNR, SSIM, LPIPS, VFID | ✓ |
+| `vbench` | Subject/Background Consistency, Motion Smoothness, etc. | ✗ |
+
+### GT-Based Quality Metrics
+
+Single video pair (PSNR / SSIM / LPIPS):
 
 ```bash
-python evaluation.py pairwise \
+python evaluation.py quality \
     --gt data/real.mp4 \
     --pred data/test_hetcache.mp4
 ```
 
-### VFID (Video Fréchet Inception Distance)
+Batch evaluation (PSNR / SSIM / LPIPS + VFID):
 
 ```bash
-python evaluation.py vfid \
+python evaluation.py quality \
     --gt-dir /path/to/gt_videos \
     --pred-dir /path/to/pred_videos \
     --method hetcache \
-    --i3d-checkpoint i3d_rgb_imagenet.pt \
-    --target-frames 16
+    --i3d-checkpoint i3d_rgb_imagenet.pt
 ```
 
-VFID requires the [I3D pretrained weights](https://github.com/piergiaj/pytorch-i3d) (`i3d_rgb_imagenet.pt`).
+VFID is computed automatically in batch mode when [I3D weights](https://github.com/piergiaj/pytorch-i3d) (`i3d_rgb_imagenet.pt`) are available. GT videos are truncated to match the generated video length before I3D feature extraction (8-frame temporal sampling by default).
 
-> **⚠️ Note on VFID frame alignment (Errata)**
->
-> During the preparation of this work, we identified a frame-alignment issue in our VFID evaluation: when GT videos are longer than generated videos (e.g., GT has 80–240 frames but generated videos have 33 frames), the GT must be **truncated to the same temporal range** before I3D feature extraction. Without truncation, the I3D features encode different temporal content, inflating VFID values. Our corrected `evaluation.py` automatically truncates GT to match the generated video length. The **relative ranking** between methods is unaffected, but **absolute VFID values** in the paper are higher than the corrected values. This does not affect other metrics (PSNR, SSIM, LPIPS, VBench) which use frame-aligned comparisons.
+### Reference-Free VBench Metrics
+
+```bash
+python evaluation.py vbench \
+    --pred-dir /path/to/pred_videos \
+    --method hetcache \
+    --vbench-script VBench/evaluate.py \
+    --conda-env vbench
+```
+
+Default dimensions: `subject_consistency`, `background_consistency`, `motion_smoothness`, `dynamic_degree`, `aesthetic_quality`, `imaging_quality`. Requires [VBench](https://github.com/Vchitect/VBench).
 
 ---
 
@@ -252,7 +229,7 @@ VFID requires the [I3D pretrained weights](https://github.com/piergiaj/pytorch-i
 ```
 HetCache/
 ├── inference.py              # Main entry point (CLI)
-├── evaluation.py             # Evaluation metrics (PSNR/SSIM/LPIPS/VFID)
+├── evaluation.py             # Evaluation (quality: PSNR/SSIM/LPIPS/VFID, vbench)
 ├── re_PAB_mgr.py             # PAB baseline manager
 ├── hetcache/
 │   └── __init__.py           # Re-exports: HetCache, TeaCache, WanVideoPipeline

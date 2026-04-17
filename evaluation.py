@@ -2,34 +2,39 @@
 """
 Evaluation script for HetCache.
 
-Computes quality metrics between generated videos and ground-truth:
-  - PSNR  (per-frame, higher is better)
-  - SSIM  (per-frame, higher is better)
-  - LPIPS (per-frame, lower is better)
-  - VFID  (distribution-level via I3D, lower is better)
+Subcommands
+-----------
+quality   — GT-based metrics: PSNR, SSIM, LPIPS, VFID  (requires GT videos)
+vbench    — Reference-free metrics via VBench            (no GT needed)
 
-Usage:
-    # Per-video metrics (PSNR / SSIM / LPIPS)
-    python evaluation.py pairwise \
+Usage examples:
+
+    # GT-based quality metrics (single pair — PSNR / SSIM / LPIPS only)
+    python evaluation.py quality \
         --gt data/real.mp4 \
         --pred data/test_hetcache.mp4
 
-    # VFID across a set of videos
-    python evaluation.py vfid \
+    # GT-based quality metrics (batch — PSNR / SSIM / LPIPS + VFID)
+    python evaluation.py quality \
         --gt-dir /path/to/gt_videos \
         --pred-dir /path/to/pred_videos \
         --method hetcache
 
+    # Reference-free VBench metrics
+    python evaluation.py vbench \
+        --pred-dir /path/to/pred_videos \
+        --method hetcache
+
 Note on VFID frame alignment:
-    VFID requires I3D features from temporally aligned content.  When GT
-    videos are longer than generated videos, this script **truncates GT to
-    the first N frames** (matching the generated length) before I3D feature
-    extraction.  Previous evaluation code did not perform this truncation,
-    leading to inflated absolute VFID values.  See README for details.
+    GT videos are automatically **truncated to the first N frames** (matching
+    the generated video length) before I3D feature extraction.  I3D temporal
+    sampling defaults to 8 frames.
 """
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -132,12 +137,13 @@ def load_i3d_model(checkpoint, device="cuda"):
 
 
 def extract_i3d_features(model, video_path, device="cuda",
-                         target_frames=16, max_frames=None):
+                         target_frames=8, max_frames=None):
     """
     Extract 1024-d I3D features from a video.
 
     Args:
         target_frames: Number of frames to feed I3D (temporal sampling).
+                       Default 8 for short generated clips.
         max_frames: Truncate video to first N frames BEFORE sampling.
                     Use this to align GT temporal range with generated videos.
     """
@@ -150,7 +156,7 @@ def extract_i3d_features(model, video_path, device="cuda",
         indices = np.linspace(0, len(frames) - 1, target_frames, dtype=int)
         frames = [frames[i] for i in indices]
 
-    # Resize to 224×224
+    # Resize to 224x224
     frames = [cv2.resize(f, (224, 224)) for f in frames]
 
     # (T, H, W, C) -> (1, C, T, H, W), normalise to [-1, 1]
@@ -190,37 +196,151 @@ def compute_vfid(gt_features, pred_features):
 
 
 # ──────────────────────────────────────────────────────────────────────
-#  CLI: pairwise  (single GT-pred pair → PSNR / SSIM / LPIPS)
+#  Helpers: discover video pairs
 # ──────────────────────────────────────────────────────────────────────
 
-def cmd_pairwise(args):
-    gt_frames = read_video_frames(args.gt)
-    pred_frames = read_video_frames(args.pred)
-    gt_frames, pred_frames = align_frame_counts(gt_frames, pred_frames)
-    n = len(gt_frames)
+def discover_video_pairs(gt_dir, pred_dir, method):
+    """Find (gt_path, pred_path) pairs by matching filenames."""
+    gt_dir, pred_dir = Path(gt_dir), Path(pred_dir)
 
+    # Try method-suffixed names first, then plain names
+    pred_videos = sorted(pred_dir.glob(f"*_{method}.mp4"))
+    if not pred_videos:
+        pred_videos = sorted(pred_dir.glob("*.mp4"))
+
+    pairs = []
+    for pred_path in pred_videos:
+        name = pred_path.stem
+        base_name = name.replace(f"_{method}", "") if f"_{method}" in name else name
+
+        gt_path = None
+        for pattern in [f"{base_name}.mp4", f"{base_name}_raw_video.mp4"]:
+            candidate = gt_dir / pattern
+            if candidate.exists():
+                gt_path = candidate
+                break
+
+        if gt_path is not None:
+            pairs.append((gt_path, pred_path))
+
+    return pairs
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  CLI: quality  (GT-based: PSNR / SSIM / LPIPS / VFID)
+# ──────────────────────────────────────────────────────────────────────
+
+def cmd_quality(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    psnr_vals, ssim_vals, lpips_vals = [], [], []
 
-    for i in tqdm(range(n), desc="Computing metrics"):
-        psnr_vals.append(compute_psnr(gt_frames[i], pred_frames[i]))
-        ssim_vals.append(compute_ssim_frame(gt_frames[i], pred_frames[i]))
-        lpips_vals.append(compute_lpips_frame(gt_frames[i], pred_frames[i], device))
+    # ── Single-pair mode ──
+    if args.gt and args.pred:
+        gt_frames = read_video_frames(args.gt)
+        pred_frames = read_video_frames(args.pred)
+        gt_frames, pred_frames = align_frame_counts(gt_frames, pred_frames)
+        n = len(gt_frames)
+
+        psnr_vals, ssim_vals, lpips_vals = [], [], []
+        for i in tqdm(range(n), desc="Per-frame metrics"):
+            psnr_vals.append(compute_psnr(gt_frames[i], pred_frames[i]))
+            ssim_vals.append(compute_ssim_frame(gt_frames[i], pred_frames[i]))
+            lpips_vals.append(compute_lpips_frame(gt_frames[i], pred_frames[i], device))
+
+        results = {
+            "gt": str(args.gt),
+            "pred": str(args.pred),
+            "num_frames": n,
+            "psnr": float(np.mean(psnr_vals)),
+            "ssim": float(np.mean(ssim_vals)),
+            "lpips": float(np.mean(lpips_vals)),
+        }
+
+        print(f"\n{'='*60}")
+        print(f"  PSNR  : {results['psnr']:.2f} dB")
+        print(f"  SSIM  : {results['ssim']:.4f}")
+        print(f"  LPIPS : {results['lpips']:.4f}")
+        print(f"  Frames: {n}")
+        print(f"{'='*60}")
+
+        if args.output:
+            with open(args.output, "w") as f:
+                json.dump(results, f, indent=2)
+            print(f"Saved to {args.output}")
+        return results
+
+    # ── Batch mode (directories) ──
+    if not (args.gt_dir and args.pred_dir):
+        print("Error: provide either --gt/--pred or --gt-dir/--pred-dir")
+        sys.exit(1)
+
+    pairs = discover_video_pairs(args.gt_dir, args.pred_dir, args.method)
+    if not pairs:
+        print(f"No video pairs found in {args.pred_dir}")
+        sys.exit(1)
+
+    print(f"Found {len(pairs)} video pairs")
+
+    # Load I3D for VFID
+    i3d_model = None
+    if args.i3d_checkpoint and Path(args.i3d_checkpoint).exists():
+        print(f"Loading I3D from {args.i3d_checkpoint} ...")
+        i3d_model = load_i3d_model(args.i3d_checkpoint, device)
+    else:
+        print("I3D checkpoint not found — skipping VFID. "
+              "Download i3d_rgb_imagenet.pt from https://github.com/piergiaj/pytorch-i3d")
+
+    all_psnr, all_ssim, all_lpips = [], [], []
+    gt_feats, pred_feats = [], []
+
+    for gt_path, pred_path in tqdm(pairs, desc="Evaluating"):
+        # Per-frame metrics
+        gt_frames = read_video_frames(str(gt_path))
+        pred_frames = read_video_frames(str(pred_path))
+        gt_frames, pred_frames = align_frame_counts(gt_frames, pred_frames)
+
+        psnr_v, ssim_v, lpips_v = [], [], []
+        for i in range(len(gt_frames)):
+            psnr_v.append(compute_psnr(gt_frames[i], pred_frames[i]))
+            ssim_v.append(compute_ssim_frame(gt_frames[i], pred_frames[i]))
+            lpips_v.append(compute_lpips_frame(gt_frames[i], pred_frames[i], device))
+
+        all_psnr.append(np.mean(psnr_v))
+        all_ssim.append(np.mean(ssim_v))
+        all_lpips.append(np.mean(lpips_v))
+
+        # I3D features for VFID (truncate GT to generated length)
+        if i3d_model is not None:
+            pred_n = len(read_video_frames(str(pred_path)))
+            pred_feats.append(extract_i3d_features(
+                i3d_model, str(pred_path), device,
+                target_frames=args.target_frames,
+            ))
+            gt_feats.append(extract_i3d_features(
+                i3d_model, str(gt_path), device,
+                target_frames=args.target_frames,
+                max_frames=pred_n,
+            ))
 
     results = {
-        "gt": str(args.gt),
-        "pred": str(args.pred),
-        "num_frames": n,
-        "psnr": float(np.mean(psnr_vals)),
-        "ssim": float(np.mean(ssim_vals)),
-        "lpips": float(np.mean(lpips_vals)),
+        "method": args.method,
+        "num_videos": len(pairs),
+        "psnr": float(np.mean(all_psnr)),
+        "ssim": float(np.mean(all_ssim)),
+        "lpips": float(np.mean(all_lpips)),
     }
 
+    if gt_feats and len(gt_feats) >= 2:
+        vfid = compute_vfid(np.stack(gt_feats), np.stack(pred_feats))
+        results["vfid"] = float(vfid)
+        results["vfid_target_frames"] = args.target_frames
+
     print(f"\n{'='*60}")
+    print(f"  Method: {args.method}  ({len(pairs)} videos)")
     print(f"  PSNR  : {results['psnr']:.2f} dB")
     print(f"  SSIM  : {results['ssim']:.4f}")
     print(f"  LPIPS : {results['lpips']:.4f}")
-    print(f"  Frames: {n}")
+    if "vfid" in results:
+        print(f"  VFID  : {results['vfid']:.4f}")
     print(f"{'='*60}")
 
     if args.output:
@@ -232,88 +352,105 @@ def cmd_pairwise(args):
 
 
 # ──────────────────────────────────────────────────────────────────────
-#  CLI: vfid  (directory of videos → VFID)
+#  CLI: vbench  (reference-free metrics via VBench)
 # ──────────────────────────────────────────────────────────────────────
 
-def cmd_vfid(args):
-    gt_dir = Path(args.gt_dir)
-    pred_dir = Path(args.pred_dir)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+VBENCH_DIMENSIONS = [
+    "subject_consistency",
+    "background_consistency",
+    "motion_smoothness",
+    "dynamic_degree",
+    "aesthetic_quality",
+    "imaging_quality",
+]
 
-    # Discover pred videos matching the method suffix
+
+def cmd_vbench(args):
+    pred_dir = Path(args.pred_dir)
+
+    # Discover videos
     pred_videos = sorted(pred_dir.glob(f"*_{args.method}.mp4"))
     if not pred_videos:
-        # Try without suffix (direct name matching)
         pred_videos = sorted(pred_dir.glob("*.mp4"))
-
     if not pred_videos:
         print(f"No videos found in {pred_dir}")
         sys.exit(1)
+    print(f"Found {len(pred_videos)} videos for method '{args.method}'")
 
-    print(f"Found {len(pred_videos)} predicted videos")
+    # Organize into a temp directory (VBench expects a flat folder)
+    vbench_dir = pred_dir / f"_vbench_{args.method}"
+    vbench_dir.mkdir(parents=True, exist_ok=True)
+    for v in pred_videos:
+        link = vbench_dir / v.name
+        if link.exists():
+            link.unlink()
+        link.symlink_to(v.absolute())
 
-    # Load I3D
-    model = load_i3d_model(args.i3d_checkpoint, device)
-
-    gt_feats, pred_feats = [], []
-    for pred_path in tqdm(pred_videos, desc="Extracting I3D features"):
-        # Determine GT path
-        name = pred_path.stem
-        if f"_{args.method}" in name:
-            base_name = name.replace(f"_{args.method}", "")
-        else:
-            base_name = name
-
-        # Try common GT naming patterns
-        gt_path = None
-        for pattern in [f"{base_name}.mp4", f"{base_name}_raw_video.mp4"]:
-            candidate = gt_dir / pattern
-            if candidate.exists():
-                gt_path = candidate
-                break
-        if gt_path is None:
-            print(f"  Warning: GT not found for {name}, skipping")
-            continue
-
-        # Get generated frame count to truncate GT
-        pred_n = len(read_video_frames(str(pred_path)))
-
-        pred_feat = extract_i3d_features(
-            model, str(pred_path), device,
-            target_frames=args.target_frames,
-        )
-        gt_feat = extract_i3d_features(
-            model, str(gt_path), device,
-            target_frames=args.target_frames,
-            max_frames=pred_n,  # truncate GT to match generated length
-        )
-        pred_feats.append(pred_feat)
-        gt_feats.append(gt_feat)
-
-    if len(gt_feats) < 2:
-        print("Not enough videos for VFID (need >= 2)")
+    # VBench evaluate.py path
+    vbench_script = args.vbench_script
+    if not Path(vbench_script).exists():
+        print(f"VBench evaluate.py not found at {vbench_script}")
+        print("Install VBench: pip install vbench  or  git clone https://github.com/Vchitect/VBench")
         sys.exit(1)
 
-    gt_feats = np.stack(gt_feats)
-    pred_feats = np.stack(pred_feats)
+    results_dir = Path(vbench_script).parent / "evaluation_results"
+    dimensions = args.dimensions or VBENCH_DIMENSIONS
 
-    vfid = compute_vfid(gt_feats, pred_feats)
+    all_scores = {}
+    for dim in dimensions:
+        print(f"\n  [{dim}]")
+        existing_files = set(results_dir.glob("results_*_eval_results.json")) if results_dir.exists() else set()
 
+        cmd = [
+            "python", vbench_script,
+            "--dimension", dim,
+            "--videos_path", str(vbench_dir),
+            "--mode=custom_input",
+        ]
+        if args.conda_env:
+            cmd = ["conda", "run", "-n", args.conda_env] + cmd
+
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if proc.returncode != 0:
+                print(f"    Error: {proc.stderr[-300:]}")
+                all_scores[dim] = None
+                continue
+
+            new_files = set(results_dir.glob("results_*_eval_results.json")) - existing_files
+            if not new_files:
+                print("    Warning: no result file produced")
+                all_scores[dim] = None
+                continue
+
+            result_file = sorted(new_files, key=lambda p: p.stat().st_mtime)[-1]
+            with open(result_file) as f:
+                data = json.load(f)
+
+            if dim in data and isinstance(data[dim], list) and data[dim]:
+                score = float(data[dim][0])
+                all_scores[dim] = score
+                print(f"    Score: {score:.4f}")
+            else:
+                all_scores[dim] = None
+                print("    Warning: could not parse score")
+
+        except subprocess.TimeoutExpired:
+            print("    Timeout")
+            all_scores[dim] = None
+
+    # Summary
     print(f"\n{'='*60}")
-    print(f"  VFID  : {vfid:.4f}")
-    print(f"  Videos: {len(gt_feats)}")
-    print(f"  Frames: {args.target_frames} (GT truncated to generated length)")
+    print(f"  VBench — {args.method}  ({len(pred_videos)} videos)")
+    for dim in dimensions:
+        v = all_scores.get(dim)
+        print(f"  {dim:<28s}: {v:.4f}" if v is not None else f"  {dim:<28s}: N/A")
     print(f"{'='*60}")
 
     if args.output:
-        results = {
-            "method": args.method,
-            "vfid": float(vfid),
-            "num_videos": len(gt_feats),
-            "target_frames": args.target_frames,
-        }
+        out = {"method": args.method, "num_videos": len(pred_videos), "scores": all_scores}
         with open(args.output, "w") as f:
-            json.dump(results, f, indent=2)
+            json.dump(out, f, indent=2)
         print(f"Saved to {args.output}")
 
 
@@ -323,38 +460,53 @@ def cmd_vfid(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="HetCache Evaluation — PSNR / SSIM / LPIPS / VFID",
+        description="HetCache Evaluation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command")
 
-    # -- pairwise --
-    p_pair = sub.add_parser("pairwise", help="Per-video PSNR / SSIM / LPIPS")
-    p_pair.add_argument("--gt", type=str, required=True, help="Ground-truth video")
-    p_pair.add_argument("--pred", type=str, required=True, help="Predicted video")
-    p_pair.add_argument("--output", type=str, default=None, help="Output JSON")
+    # ── quality (GT-based) ──
+    p_q = sub.add_parser("quality",
+                         help="GT-based metrics: PSNR / SSIM / LPIPS / VFID")
+    # Single-pair mode
+    p_q.add_argument("--gt", type=str, default=None, help="Single GT video path")
+    p_q.add_argument("--pred", type=str, default=None, help="Single predicted video path")
+    # Batch mode
+    p_q.add_argument("--gt-dir", type=str, default=None, help="GT video directory")
+    p_q.add_argument("--pred-dir", type=str, default=None, help="Predicted video directory")
+    p_q.add_argument("--method", type=str, default="hetcache",
+                     help="Method suffix in filenames (default: hetcache)")
+    # VFID options
+    p_q.add_argument("--i3d-checkpoint", type=str, default="i3d_rgb_imagenet.pt",
+                     help="Path to I3D pretrained weights")
+    p_q.add_argument("--target-frames", type=int, default=8,
+                     help="Number of frames sampled for I3D (default: 8)")
+    p_q.add_argument("--output", type=str, default=None, help="Output JSON")
 
-    # -- vfid --
-    p_vfid = sub.add_parser("vfid", help="VFID across a directory of videos")
-    p_vfid.add_argument("--gt-dir", type=str, required=True, help="GT video directory")
-    p_vfid.add_argument("--pred-dir", type=str, required=True, help="Predicted video directory")
-    p_vfid.add_argument("--method", type=str, default="hetcache",
-                        help="Method suffix in filenames (e.g., 'hetcache', 'baseline-50')")
-    p_vfid.add_argument("--i3d-checkpoint", type=str, default="i3d_rgb_imagenet.pt",
-                        help="Path to I3D pretrained weights")
-    p_vfid.add_argument("--target-frames", type=int, default=16,
-                        help="Number of frames for I3D feature extraction")
-    p_vfid.add_argument("--output", type=str, default=None, help="Output JSON")
+    # ── vbench (reference-free) ──
+    p_v = sub.add_parser("vbench",
+                         help="Reference-free metrics via VBench")
+    p_v.add_argument("--pred-dir", type=str, required=True,
+                     help="Directory of predicted videos")
+    p_v.add_argument("--method", type=str, default="hetcache",
+                     help="Method suffix in filenames")
+    p_v.add_argument("--vbench-script", type=str, default="VBench/evaluate.py",
+                     help="Path to VBench evaluate.py")
+    p_v.add_argument("--conda-env", type=str, default=None,
+                     help="Conda env name to run VBench in (e.g., vbench)")
+    p_v.add_argument("--dimensions", nargs="+", default=None,
+                     help=f"VBench dimensions (default: {VBENCH_DIMENSIONS})")
+    p_v.add_argument("--output", type=str, default=None, help="Output JSON")
 
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
         sys.exit(1)
 
-    if args.command == "pairwise":
-        cmd_pairwise(args)
-    elif args.command == "vfid":
-        cmd_vfid(args)
+    if args.command == "quality":
+        cmd_quality(args)
+    elif args.command == "vbench":
+        cmd_vbench(args)
 
 
 if __name__ == "__main__":
