@@ -1,16 +1,19 @@
-# HetCache: Training-Free Acceleration for Diffusion-Based Video Editing via Heterogeneous Caching
+# Accelerating Diffusion-based Video Editing via Heterogeneous Caching: Beyond Full Computing at Sampled Denoising Timesteps
 
 <p align="center">
   <a href="https://arxiv.org/abs/2603.24260"><img src="https://img.shields.io/badge/arXiv-2603.24260-b31b1b.svg" alt="arXiv"></a>
   <a href="#license"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg" alt="PyTorch"></a>
+  <a href="#citation"><img src="https://img.shields.io/badge/CVPR-2026-4b44ce.svg" alt="CVPR 2026"></a>
 </p>
 
-> **HetCache: Training-Free Acceleration for Diffusion-Based Video Editing via Heterogeneous Caching**
+> **Official implementation** of the CVPR 2026 paper:
+>
+> *Accelerating Diffusion-based Video Editing via Heterogeneous Caching: Beyond Full Computing at Sampled Denoising Timesteps*
 >
 > Tianyi Liu, Ye Lu, Linfeng Zhang, Chen Cai, Jianjun Gao, Yi Wang, Kim-Hui Yap, Lap-Pui Chau
 >
-> **CVPR 2026** | [Paper (arXiv)](https://arxiv.org/abs/2603.24260)
+> [Paper (arXiv)](https://arxiv.org/abs/2603.24260)
 
 ---
 
@@ -45,7 +48,7 @@ For the small fraction of context tokens that are computed, HetCache uses a two-
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/HetCache.git
+git clone https://github.com/LIUTIGHE/HetCache.git
 cd HetCache
 
 # Create environment
@@ -213,11 +216,43 @@ Timestep t
 
 ---
 
+## Evaluation
+
+We provide `evaluation.py` for computing quality metrics.
+
+### Per-Video Metrics (PSNR / SSIM / LPIPS)
+
+```bash
+python evaluation.py pairwise \
+    --gt data/real.mp4 \
+    --pred data/test_hetcache.mp4
+```
+
+### VFID (Video Fréchet Inception Distance)
+
+```bash
+python evaluation.py vfid \
+    --gt-dir /path/to/gt_videos \
+    --pred-dir /path/to/pred_videos \
+    --method hetcache \
+    --i3d-checkpoint i3d_rgb_imagenet.pt \
+    --target-frames 16
+```
+
+VFID requires the [I3D pretrained weights](https://github.com/piergiaj/pytorch-i3d) (`i3d_rgb_imagenet.pt`).
+
+> **⚠️ Note on VFID frame alignment (Errata)**
+>
+> During the preparation of this work, we identified a frame-alignment issue in our VFID evaluation: when GT videos are longer than generated videos (e.g., GT has 80–240 frames but generated videos have 33 frames), the GT must be **truncated to the same temporal range** before I3D feature extraction. Without truncation, the I3D features encode different temporal content, inflating VFID values. Our corrected `evaluation.py` automatically truncates GT to match the generated video length. The **relative ranking** between methods is unaffected, but **absolute VFID values** in the paper are higher than the corrected values. This does not affect other metrics (PSNR, SSIM, LPIPS, VBench) which use frame-aligned comparisons.
+
+---
+
 ## Project Structure
 
 ```
 HetCache/
 ├── inference.py              # Main entry point (CLI)
+├── evaluation.py             # Evaluation metrics (PSNR/SSIM/LPIPS/VFID)
 ├── re_PAB_mgr.py             # PAB baseline manager
 ├── hetcache/
 │   └── __init__.py           # Re-exports: HetCache, TeaCache, WanVideoPipeline
@@ -248,8 +283,8 @@ HetCache/
 If you find HetCache useful, please cite our paper:
 
 ```bibtex
-@inproceedings{liu2025hetcache,
-    title     = {HetCache: Training-Free Acceleration for Diffusion-Based Video Editing via Heterogeneous Caching},
+@inproceedings{liu2026hetcache,
+    title     = {Accelerating Diffusion-based Video Editing via Heterogeneous Caching: Beyond Full Computing at Sampled Denoising Timesteps},
     author    = {Liu, Tianyi and Lu, Ye and Zhang, Linfeng and Cai, Chen and Gao, Jianjun and Wang, Yi and Yap, Kim-Hui and Chau, Lap-Pui},
     booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
     year      = {2026}
