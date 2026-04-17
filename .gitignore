@@ -23,7 +23,7 @@ venv/
 Thumbs.db
 
 # Model weights (download on demand)
-models/
+/models/
 *.safetensors
 *.pth
 *.ckpt
