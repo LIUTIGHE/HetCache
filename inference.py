@@ -39,8 +39,6 @@ from pathlib import Path
 from PIL import Image
 
 import cv2
-import lpips
-from skimage.metrics import peak_signal_noise_ratio as psnr
 
 from diffsynth import save_video, VideoData
 from diffsynth.pipelines.wan_video_new import WanVideoPipeline, ModelConfig
@@ -65,12 +63,14 @@ def read_video(video_path):
 
 def compute_psnr(video1, video2):
     """Compute average PSNR between two videos (frame-by-frame)."""
+    from skimage.metrics import peak_signal_noise_ratio as psnr
     assert len(video1) == len(video2), "Videos must have the same number of frames"
     return np.mean([psnr(f1, f2) for f1, f2 in zip(video1, video2)])
 
 
 def compute_lpips_score(video1, video2, device="cuda"):
     """Compute average LPIPS (perceptual distance) between two videos."""
+    import lpips
     assert len(video1) == len(video2), "Videos must have the same number of frames"
     loss_fn = lpips.LPIPS(net="alex").to(device)
     values = []
@@ -486,8 +486,13 @@ def save_and_evaluate(args, video, original_frames, mask_frames,
     if v1.shape != v2.shape:
         v2 = np.array([cv2.resize(f, (v1.shape[2], v1.shape[1])) for f in v2])
 
-    psnr_val = compute_psnr(v1, v2)
-    lpips_val = compute_lpips_score(v1, v2)
+    # Quality metrics (optional — requires lpips and scikit-image)
+    psnr_val, lpips_val = None, None
+    try:
+        psnr_val = compute_psnr(v1, v2)
+        lpips_val = compute_lpips_score(v1, v2)
+    except ImportError:
+        pass
 
     # Summary
     print("\n" + "=" * 72)
@@ -497,8 +502,11 @@ def save_and_evaluate(args, video, original_frames, mask_frames,
     print(f"  Inference time : {t_inf_end - t_inf_start:.2f}s")
     print(f"  Model load     : {t_model_end - t_model_start:.1f}s")
     print(f"  Peak GPU       : {gpu_peak:.0f} MB")
-    print(f"  PSNR           : {psnr_val:.2f} dB")
-    print(f"  LPIPS          : {lpips_val:.4f}")
+    if psnr_val is not None:
+        print(f"  PSNR           : {psnr_val:.2f} dB")
+        print(f"  LPIPS          : {lpips_val:.4f}")
+    else:
+        print("  PSNR / LPIPS   : (install lpips & scikit-image for quality metrics)")
     print("=" * 72)
 
     return psnr_val, lpips_val

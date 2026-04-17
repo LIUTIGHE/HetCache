@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-I3D模型定义 - 用于VFID计算
-从 /media/tianyi/BSC-VideoCompletion/BiscV/model/i3d.py 复制并优化
+I3D (Inflated 3D ConvNet) model for VFID computation.
+
+Based on the PyTorch I3D implementation from https://github.com/piergiaj/pytorch-i3d
 """
 
 import torch
@@ -297,14 +298,14 @@ class InceptionI3d(nn.Module):
         return logits
 
     def extract_features(self, x, target_endpoint='Logits'):
-        """提取特征 - 用于VFID计算"""
+        """Extract features for VFID computation."""
         for end_point in self.VALID_ENDPOINTS:
             if end_point in self.end_points:
                 x = self._modules[end_point](x)
                 if end_point == target_endpoint:
                     break
         if target_endpoint == 'Logits':
-            # 返回池化前的特征 (B, C, T, H, W) -> (B, C)
+            # Global average pooling: (B, C, T, H, W) -> (B, C)
             return x.mean(4).mean(3).mean(2)
         else:
             return x
@@ -312,18 +313,18 @@ class InceptionI3d(nn.Module):
 
 def load_i3d_model(checkpoint_path, device='cuda'):
     """
-    加载I3D预训练模型
-    
+    Load pretrained I3D model.
+
     Args:
-        checkpoint_path: I3D权重路径
-        device: 设备
-    
+        checkpoint_path: Path to I3D weights (.pt file).
+        device: Device to load model on.
+
     Returns:
-        model: 加载好的I3D模型
+        model: Loaded I3D model in eval mode.
     """
     model = InceptionI3d(num_classes=400, in_channels=3, final_endpoint='Logits')
     
-    # 加载预训练权重
+    # Load pretrained weights
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint)
     
